@@ -1,0 +1,276 @@
+{
+  "name": "AIQ-PF-01-CreateProject",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "AIQ Product Factory — Nuevo Proyecto",
+        "formDescription": "Ingresá la idea de producto para iniciar el pipeline de AIQ Product Factory.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Nombre del proyecto",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Idea / Descripción",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Notas",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "form-trigger-01",
+      "name": "Form: Nueva Idea",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -208,
+        304
+      ],
+      "webhookId": "aiq-pf-01-create-project"
+    },
+    {
+      "parameters": {
+        "jsCode": "function slugify(s) {\n  return s\n    .toString()\n    .toLowerCase()\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/(^-|-$)/g, '');\n}\n\nconst input = items[0].json;\nconst projectName = input['Nombre del proyecto'];\nconst idea = input['Idea / Descripción'];\nconst notes = input['Notas'] || '';\n\nconst slug = `${slugify(projectName)}-${Date.now().toString(36)}`;\nconst basePathHost = `/opt/aiq/product-factory/repo/projects/${slug}`;\nconst basePathContainer = `/aiq/product-factory/repo/projects/${slug}`;\n\nconst requirementsMd = `# ${projectName}\\n\\n## Idea / Descripción\\n\\n${idea}\\n\\n## Notas\\n\\n${notes}\\n`;\n\nreturn [{\n  json: {\n    projectName,\n    idea,\n    notes,\n    slug,\n    basePathHost,\n    basePathContainer,\n    requirementsMd\n  }\n}];"
+      },
+      "id": "code-slug-01",
+      "name": "Generar Slug",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=mkdir -p {{ $json.basePathHost }}/input {{ $json.basePathHost }}/research {{ $json.basePathHost }}/strategy {{ $json.basePathHost }}/product {{ $json.basePathHost }}/ux {{ $json.basePathHost }}/architecture {{ $json.basePathHost }}/database {{ $json.basePathHost }}/api {{ $json.basePathHost }}/final {{ $json.basePathHost }}/logs"
+      },
+      "id": "ssh-mkdir-01",
+      "name": "Crear Estructura de Carpetas",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        240,
+        304
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "requirementsMd",
+        "options": {
+          "fileName": "requirements.md"
+        }
+      },
+      "id": "convert-file-01",
+      "name": "Convertir a Archivo",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $('Generar Slug').item.json.basePathContainer }}/input/requirements.md",
+        "options": {}
+      },
+      "id": "write-file-01",
+      "name": "Guardar requirements.md",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO Projects (Slug, Name, Idea, Status)\nOUTPUT INSERTED.ProjectId\nVALUES (N'{{ $('Generar Slug').item.json.slug }}', N'{{ $('Generar Slug').item.json.projectName.replace(/'/g, \"''\") }}', N'{{ $('Generar Slug').item.json.idea.replace(/'/g, \"''\") }}', 'Pending');",
+        "options": {}
+      },
+      "id": "sql-insert-project-01",
+      "name": "SQL: Insert Project",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        304
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "AIQ SQL Server"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ProjectRuns (ProjectId, Status, CurrentStage)\nOUTPUT INSERTED.RunId\nVALUES ('{{ $json.ProjectId }}', 'Pending', 'AIQ-PF-01-CreateProject');",
+        "options": {}
+      },
+      "id": "sql-insert-run-01",
+      "name": "SQL: Insert ProjectRun",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        304
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "AIQ SQL Server"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cd /opt/aiq/product-factory/repo && git add projects/{{ $('Generar Slug').item.json.slug }} && git commit -m \"Nuevo proyecto: {{ $('Generar Slug').item.json.slug }}\" && git push"
+      },
+      "id": "ssh-git-push-01",
+      "name": "Git Commit y Push",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        304
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Proyecto creado",
+        "completionMessage": "=El proyecto \"{{ $('Generar Slug').item.json.projectName }}\" fue creado con slug {{ $('Generar Slug').item.json.slug }}. El pipeline de AIQ Product Factory comenzará en breve.",
+        "options": {}
+      },
+      "id": "form-completion-01",
+      "name": "Form: Confirmación",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        304
+      ],
+      "webhookId": "1bc2735e-4b60-465d-bf95-2c54cab988f4"
+    }
+  ],
+  "connections": {
+    "Form: Nueva Idea": {
+      "main": [
+        [
+          {
+            "node": "Generar Slug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar Slug": {
+      "main": [
+        [
+          {
+            "node": "Crear Estructura de Carpetas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Estructura de Carpetas": {
+      "main": [
+        [
+          {
+            "node": "Convertir a Archivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir a Archivo": {
+      "main": [
+        [
+          {
+            "node": "Guardar requirements.md",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar requirements.md": {
+      "main": [
+        [
+          {
+            "node": "SQL: Insert Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL: Insert Project": {
+      "main": [
+        [
+          {
+            "node": "SQL: Insert ProjectRun",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL: Insert ProjectRun": {
+      "main": [
+        [
+          {
+            "node": "Git Commit y Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Git Commit y Push": {
+      "main": [
+        [
+          {
+            "node": "Form: Confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}
