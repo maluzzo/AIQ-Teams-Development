@@ -1,0 +1,334 @@
+{
+  "name": "AIQ-PF-04-ProductStrategy",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-01",
+      "name": "Cada 1 minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT TOP 1 pr.RunId, pr.ProjectId, p.Slug, p.Name AS ProjectName, p.Idea\nFROM ProjectRuns pr\nJOIN Projects p ON p.ProjectId = pr.ProjectId\nWHERE pr.Status = 'Pending' AND pr.CurrentStage = 'AIQ-PF-04-ProductStrategy'\nORDER BY pr.StartedAt ASC;",
+        "options": {}
+      },
+      "id": "sql-poll-01",
+      "name": "Buscar Tarea Pendiente",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        -176,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Running' WHERE RunId = '{{ $json.RunId }}';"
+      },
+      "id": "sql-claim-01",
+      "name": "Reclamar Tarea",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        48,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cat /opt/aiq/product-factory/repo/projects/{{ $json.Slug }}/research/research-consolidated.md"
+      },
+      "id": "ssh-read-research-01",
+      "name": "Leer Research Consolidado",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        272,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Buscar Tarea Pendiente').item.json;\nconst research = $json.stdout || '';\n\nconst systemPrompt = 'Sos un estratega de producto senior. Respondé en español, en formato markdown, con recomendaciones concretas y accionables, no genéricas.';\nconst userPrompt = `Basándote en esta investigación consolidada para el proyecto \"${item.ProjectName}\":\\n\\n${research}\\n\\nGenerá tres secciones separadas EXACTAMENTE por estos marcadores (sin texto adicional antes o después de cada marcador):\\n\\n===PRODUCT_STRATEGY===\\n(Problema principal, usuario objetivo, propuesta de valor, diferenciadores, hipótesis clave)\\n\\n===BUSINESS_MODEL===\\n(Modelo de negocio: cómo genera ingresos, estructura de costos, canales, métricas clave)\\n\\n===OPPORTUNITY_ANALYSIS===\\n(Tamaño de oportunidad, riesgos principales, por qué ahora, por qué este equipo/enfoque)`;\n\nconst body = {\n  model: 'openai/gpt-4o-mini',\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ]\n};\n\nreturn [{ json: { ...item, requestBody: JSON.stringify(body) } }];"
+      },
+      "id": "code-buildprompt-01",
+      "name": "Armar Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {}
+      },
+      "id": "http-openrouter-01",
+      "name": "OpenRouter: Definir Estrategia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "7oXISLG2iO9afGrU",
+          "name": "OpenRouter Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Buscar Tarea Pendiente').item.json;\nconst response = $json;\nconst content = response.choices?.[0]?.message?.content || '';\nconst usage = response.usage || {};\n\nfunction extract(marker, nextMarker) {\n  const start = content.indexOf(marker);\n  if (start === -1) return '_No se pudo generar esta sección._';\n  const from = start + marker.length;\n  const end = nextMarker ? content.indexOf(nextMarker, from) : content.length;\n  return content.slice(from, end === -1 ? content.length : end).trim();\n}\n\nconst productStrategyMd = extract('===PRODUCT_STRATEGY===', '===BUSINESS_MODEL===');\nconst businessModelMd = extract('===BUSINESS_MODEL===', '===OPPORTUNITY_ANALYSIS===');\nconst opportunityAnalysisMd = extract('===OPPORTUNITY_ANALYSIS===', null);\n\nconst strategyMd = `# Product Strategy — ${item.ProjectName}\\n\\n${productStrategyMd}\\n`;\nconst bmMd = `# Business Model — ${item.ProjectName}\\n\\n${businessModelMd}\\n`;\nconst oaMd = `# Opportunity Analysis — ${item.ProjectName}\\n\\n${opportunityAnalysisMd}\\n`;\n\nconst reportMd = `# Reporte de Etapa — AIQ-PF-04-ProductStrategy\\n\\n` +\n  `**Proyecto:** ${item.ProjectName} (${item.Slug})\\n` +\n  `**Fecha:** ${new Date().toISOString()}\\n` +\n  `**Modelo usado:** ${response.model || 'desconocido'}\\n` +\n  `**Tokens:** entrada ${usage.prompt_tokens ?? '?'} / salida ${usage.completion_tokens ?? '?'}\\n\\n` +\n  `## Archivos generados\\n- strategy/product-strategy.md\\n- strategy/business-model.md\\n- strategy/opportunity-analysis.md\\n\\n` +\n  `## Resumen\\n${productStrategyMd.slice(0, 500)}${productStrategyMd.length > 500 ? '...' : ''}\\n`;\n\nreturn [{\n  json: {\n    ...item,\n    strategyMdB64: Buffer.from(strategyMd, 'utf8').toString('base64'),\n    bmMdB64: Buffer.from(bmMd, 'utf8').toString('base64'),\n    oaMdB64: Buffer.from(oaMd, 'utf8').toString('base64'),\n    reportMdB64: Buffer.from(reportMd, 'utf8').toString('base64')\n  }\n}];"
+      },
+      "id": "code-parse-01",
+      "name": "Separar Documentos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO Documents (ProjectId, RunId, DocumentType, FilePath)\nVALUES\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'product-strategy.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/strategy/product-strategy.md'),\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'business-model.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/strategy/business-model.md'),\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'opportunity-analysis.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/strategy/opportunity-analysis.md'),\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'report-04-product-strategy.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/logs/report-04-product-strategy.md');",
+        "options": {}
+      },
+      "id": "sql-insert-docs-01",
+      "name": "SQL: Registrar Documentos",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1616,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cd /opt/aiq/product-factory/repo && git pull --rebase && git add projects/{{ $('Separar Documentos').item.json.Slug }} && git commit -m \"Product strategy: {{ $('Separar Documentos').item.json.Slug }}\" && git push"
+      },
+      "id": "ssh-git-push-04",
+      "name": "Git Commit y Push",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Waiting', CurrentStage = 'AIQ-PF-05-ProductArchitecture' WHERE RunId = '{{ $('Separar Documentos').item.json.RunId }}';"
+      },
+      "id": "sql-advance-01",
+      "name": "Avanzar a Siguiente Etapa",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        2064,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=BASE=/opt/aiq/product-factory/repo/projects/{{ $json.Slug }}\necho '{{ $json.strategyMdB64 }}' | base64 -d > \"$BASE/strategy/product-strategy.md\"\necho '{{ $json.bmMdB64 }}' | base64 -d > \"$BASE/strategy/business-model.md\"\necho '{{ $json.oaMdB64 }}' | base64 -d > \"$BASE/strategy/opportunity-analysis.md\"\necho '{{ $json.reportMdB64 }}' | base64 -d > \"$BASE/logs/report-04-product-strategy.md\"\necho WRITE_OK"
+      },
+      "id": "ssh-write-files-01",
+      "name": "Escribir Archivos",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada 1 minuto": {
+      "main": [
+        [
+          {
+            "node": "Buscar Tarea Pendiente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Tarea Pendiente": {
+      "main": [
+        [
+          {
+            "node": "Reclamar Tarea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reclamar Tarea": {
+      "main": [
+        [
+          {
+            "node": "Leer Research Consolidado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Research Consolidado": {
+      "main": [
+        [
+          {
+            "node": "Armar Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter: Definir Estrategia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter: Definir Estrategia": {
+      "main": [
+        [
+          {
+            "node": "Separar Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Documentos": {
+      "main": [
+        [
+          {
+            "node": "Escribir Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL: Registrar Documentos": {
+      "main": [
+        [
+          {
+            "node": "Git Commit y Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Git Commit y Push": {
+      "main": [
+        [
+          {
+            "node": "Avanzar a Siguiente Etapa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escribir Archivos": {
+      "main": [
+        [
+          {
+            "node": "SQL: Registrar Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

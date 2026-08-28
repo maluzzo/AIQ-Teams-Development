@@ -1,0 +1,303 @@
+{
+  "name": "AIQ-PF-02-MarketResearch",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-01",
+      "name": "Cada 1 minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT TOP 1 pr.RunId, pr.ProjectId, p.Slug, p.Name AS ProjectName, p.Idea\nFROM ProjectRuns pr\nJOIN Projects p ON p.ProjectId = pr.ProjectId\nWHERE pr.Status = 'Pending' AND pr.CurrentStage = 'AIQ-PF-02-MarketResearch'\nORDER BY pr.StartedAt ASC;",
+        "options": {}
+      },
+      "id": "sql-poll-01",
+      "name": "Buscar Tarea Pendiente",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        -176,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Running' WHERE RunId = '{{ $json.RunId }}';"
+      },
+      "id": "sql-claim-01",
+      "name": "Reclamar Tarea",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        48,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Buscar Tarea Pendiente').item.json;\nconst systemPrompt = 'Sos un analista de investigación de mercado senior. Respondé siempre en español, en formato markdown, con información realista y honesta. Si no tenés certeza de un dato, aclaralo como estimación.';\nconst userPrompt = `Producto/Idea a investigar:\\nNombre: ${item.ProjectName}\\nDescripción: ${item.Idea}\\n\\nGenerá tres secciones separadas EXACTAMENTE por estos marcadores (sin texto adicional antes o después de cada marcador):\\n\\n===MARKET_RESEARCH===\\n(Análisis de mercado: tamaño, tendencias, comportamiento de usuarios, oportunidades)\\n\\n===COMPETITOR_ANALYSIS===\\n(Análisis de al menos 3 competidores o productos similares: nombre, propuesta, precios, fortalezas, debilidades)\\n\\n===USER_RESEARCH===\\n(Usuario objetivo, problemas actuales, necesidades, comportamiento)`;\n\nconst body = {\n  model: 'openai/gpt-4o-mini',\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ]\n};\n\nreturn [{ json: { ...item, requestBody: JSON.stringify(body) } }];"
+      },
+      "id": "code-buildprompt-01",
+      "name": "Armar Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {}
+      },
+      "id": "http-openrouter-01",
+      "name": "OpenRouter: Investigar Mercado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        496,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "7oXISLG2iO9afGrU",
+          "name": "OpenRouter Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Buscar Tarea Pendiente').item.json;\nconst response = $json;\nconst content = response.choices?.[0]?.message?.content || '';\nconst usage = response.usage || {};\n\nfunction extract(marker, nextMarker) {\n  const start = content.indexOf(marker);\n  if (start === -1) return '_No se pudo generar esta sección._';\n  const from = start + marker.length;\n  const end = nextMarker ? content.indexOf(nextMarker, from) : content.length;\n  return content.slice(from, end === -1 ? content.length : end).trim();\n}\n\nconst marketResearchMd = extract('===MARKET_RESEARCH===', '===COMPETITOR_ANALYSIS===');\nconst competitorAnalysisMd = extract('===COMPETITOR_ANALYSIS===', '===USER_RESEARCH===');\nconst userResearchMd = extract('===USER_RESEARCH===', null);\n\nconst marketMd = `# Market Research — ${item.ProjectName}\\n\\n${marketResearchMd}\\n`;\nconst competitorMd = `# Competitor Analysis — ${item.ProjectName}\\n\\n${competitorAnalysisMd}\\n`;\nconst userMd = `# User Research — ${item.ProjectName}\\n\\n${userResearchMd}\\n`;\n\nconst reportMd = `# Reporte de Etapa — AIQ-PF-02-MarketResearch\\n\\n` +\n  `**Proyecto:** ${item.ProjectName} (${item.Slug})\\n` +\n  `**Fecha:** ${new Date().toISOString()}\\n` +\n  `**Modelo usado:** ${response.model || 'desconocido'}\\n` +\n  `**Tokens:** entrada ${usage.prompt_tokens ?? '?'} / salida ${usage.completion_tokens ?? '?'}\\n\\n` +\n  `## Archivos generados\\n- research/market-research.md\\n- research/competitor-analysis.md\\n- research/user-research.md\\n\\n` +\n  `## Resumen\\n${marketResearchMd.slice(0, 500)}${marketResearchMd.length > 500 ? '...' : ''}\\n`;\n\nreturn [{\n  json: {\n    ...item,\n    marketMdB64: Buffer.from(marketMd, 'utf8').toString('base64'),\n    competitorMdB64: Buffer.from(competitorMd, 'utf8').toString('base64'),\n    userMdB64: Buffer.from(userMd, 'utf8').toString('base64'),\n    reportMdB64: Buffer.from(reportMd, 'utf8').toString('base64')\n  }\n}];"
+      },
+      "id": "code-parse-01",
+      "name": "Separar Documentos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO Documents (ProjectId, RunId, DocumentType, FilePath)\nVALUES\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'market-research.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/research/market-research.md'),\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'competitor-analysis.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/research/competitor-analysis.md'),\n('{{ $('Separar Documentos').item.json.ProjectId }}', '{{ $('Separar Documentos').item.json.RunId }}', 'user-research.md', 'projects/{{ $('Separar Documentos').item.json.Slug }}/research/user-research.md');",
+        "options": {}
+      },
+      "id": "sql-insert-docs-01",
+      "name": "SQL: Registrar Documentos",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1392,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cd /opt/aiq/product-factory/repo && git pull --rebase && git add projects/{{ $('Separar Documentos').item.json.Slug }} && git commit -m \"Market research: {{ $('Separar Documentos').item.json.Slug }}\" && git push"
+      },
+      "id": "ssh-git-push-02",
+      "name": "Git Commit y Push",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1616,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Pending', CurrentStage = 'AIQ-PF-03-ResearchSynthesis' WHERE RunId = '{{ $('Separar Documentos').item.json.RunId }}';"
+      },
+      "id": "sql-advance-01",
+      "name": "Avanzar a Siguiente Etapa",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=BASE=/opt/aiq/product-factory/repo/projects/{{ $json.Slug }}\necho '{{ $json.marketMdB64 }}' | base64 -d > \"$BASE/research/market-research.md\"\necho '{{ $json.competitorMdB64 }}' | base64 -d > \"$BASE/research/competitor-analysis.md\"\necho '{{ $json.userMdB64 }}' | base64 -d > \"$BASE/research/user-research.md\"\necho '{{ $json.reportMdB64 }}' | base64 -d > \"$BASE/logs/report-02-market-research.md\"\necho WRITE_OK"
+      },
+      "id": "ssh-write-files-01",
+      "name": "Escribir Archivos",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada 1 minuto": {
+      "main": [
+        [
+          {
+            "node": "Buscar Tarea Pendiente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Tarea Pendiente": {
+      "main": [
+        [
+          {
+            "node": "Reclamar Tarea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reclamar Tarea": {
+      "main": [
+        [
+          {
+            "node": "Armar Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter: Investigar Mercado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter: Investigar Mercado": {
+      "main": [
+        [
+          {
+            "node": "Separar Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Documentos": {
+      "main": [
+        [
+          {
+            "node": "Escribir Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL: Registrar Documentos": {
+      "main": [
+        [
+          {
+            "node": "Git Commit y Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Git Commit y Push": {
+      "main": [
+        [
+          {
+            "node": "Avanzar a Siguiente Etapa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escribir Archivos": {
+      "main": [
+        [
+          {
+            "node": "SQL: Registrar Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,334 @@
+{
+  "name": "AIQ-PF-03-ResearchSynthesis",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-01",
+      "name": "Cada 1 minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT TOP 1 pr.RunId, pr.ProjectId, p.Slug, p.Name AS ProjectName, p.Idea\nFROM ProjectRuns pr\nJOIN Projects p ON p.ProjectId = pr.ProjectId\nWHERE pr.Status = 'Pending' AND pr.CurrentStage = 'AIQ-PF-03-ResearchSynthesis'\nORDER BY pr.StartedAt ASC;",
+        "options": {}
+      },
+      "id": "sql-poll-01",
+      "name": "Buscar Tarea Pendiente",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        -176,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Running' WHERE RunId = '{{ $json.RunId }}';"
+      },
+      "id": "sql-claim-01",
+      "name": "Reclamar Tarea",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        48,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cd /opt/aiq/product-factory/repo/projects/{{ $json.Slug }}/research && echo '## MARKET RESEARCH' && cat market-research.md && echo '' && echo '## COMPETITOR ANALYSIS' && cat competitor-analysis.md && echo '' && echo '## USER RESEARCH' && cat user-research.md"
+      },
+      "id": "ssh-read-research-01",
+      "name": "Leer Research Existente",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        272,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Buscar Tarea Pendiente').item.json;\nconst research = $json.stdout || '';\n\nconst systemPrompt = 'Sos un analista senior que consolida investigaciones de mercado en un documento único, coherente y accionable. Respondé en español, en formato markdown. Si detectás información contradictoria entre las secciones, marcala explícitamente como discrepancia.';\nconst userPrompt = `Consolidá la siguiente investigación en un único documento de síntesis para el proyecto \"${item.ProjectName}\":\\n\\n${research}\\n\\nEl documento final debe incluir: 1) Resumen ejecutivo, 2) Oportunidad de mercado, 3) Competencia clave, 4) Usuario objetivo y su problema principal, 5) Riesgos u observaciones, 6) Discrepancias detectadas (si las hay).`;\n\nconst body = {\n  model: 'openai/gpt-4o-mini',\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ]\n};\n\nreturn [{ json: { ...item, requestBody: JSON.stringify(body) } }];"
+      },
+      "id": "code-buildprompt-01",
+      "name": "Armar Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.requestBody }}",
+        "options": {}
+      },
+      "id": "http-openrouter-01",
+      "name": "OpenRouter: Sintetizar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "7oXISLG2iO9afGrU",
+          "name": "OpenRouter Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Buscar Tarea Pendiente').item.json;\nconst response = $json;\nconst content = response.choices?.[0]?.message?.content || '';\nconst usage = response.usage || {};\n\nconst consolidatedMd = `# Research Consolidado — ${item.ProjectName}\\n\\n${content}\\n`;\n\nconst reportMd = `# Reporte de Etapa — AIQ-PF-03-ResearchSynthesis\\n\\n` +\n  `**Proyecto:** ${item.ProjectName} (${item.Slug})\\n` +\n  `**Fecha:** ${new Date().toISOString()}\\n` +\n  `**Modelo usado:** ${response.model || 'desconocido'}\\n` +\n  `**Tokens:** entrada ${usage.prompt_tokens ?? '?'} / salida ${usage.completion_tokens ?? '?'}\\n\\n` +\n  `## Archivos generados\\n- research/research-consolidated.md\\n\\n` +\n  `## Resumen\\n${content.slice(0, 500)}${content.length > 500 ? '...' : ''}\\n`;\n\nreturn [{\n  json: {\n    ...item,\n    consolidatedMdB64: Buffer.from(consolidatedMd, 'utf8').toString('base64'),\n    reportMdB64: Buffer.from(reportMd, 'utf8').toString('base64')\n  }\n}];"
+      },
+      "id": "code-parse-01",
+      "name": "Armar Documentos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO Documents (ProjectId, RunId, DocumentType, FilePath)\nVALUES\n('{{ $('Armar Documentos').item.json.ProjectId }}', '{{ $('Armar Documentos').item.json.RunId }}', 'research-consolidated.md', 'projects/{{ $('Armar Documentos').item.json.Slug }}/research/research-consolidated.md'),\n('{{ $('Armar Documentos').item.json.ProjectId }}', '{{ $('Armar Documentos').item.json.RunId }}', 'report-03-research-synthesis.md', 'projects/{{ $('Armar Documentos').item.json.Slug }}/logs/report-03-research-synthesis.md');",
+        "options": {}
+      },
+      "id": "sql-insert-docs-01",
+      "name": "SQL: Registrar Documentos",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1616,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cd /opt/aiq/product-factory/repo && git pull --rebase && git add projects/{{ $('Armar Documentos').item.json.Slug }} && git commit -m \"Research synthesis: {{ $('Armar Documentos').item.json.Slug }}\" && git push"
+      },
+      "id": "ssh-git-push-03",
+      "name": "Git Commit y Push",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Pending', CurrentStage = 'AIQ-PF-04-ProductStrategy' WHERE RunId = '{{ $('Armar Documentos').item.json.RunId }}';"
+      },
+      "id": "sql-advance-01",
+      "name": "Avanzar a Siguiente Etapa",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        2064,
+        300
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=BASE=/opt/aiq/product-factory/repo/projects/{{ $json.Slug }}\necho '{{ $json.consolidatedMdB64 }}' | base64 -d > \"$BASE/research/research-consolidated.md\"\necho '{{ $json.reportMdB64 }}' | base64 -d > \"$BASE/logs/report-03-research-synthesis.md\"\necho WRITE_OK"
+      },
+      "id": "ssh-write-files-01",
+      "name": "Escribir Archivos",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        300
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "ItOo1i3oeTqpUmli",
+          "name": "SSH Private Key account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cada 1 minuto": {
+      "main": [
+        [
+          {
+            "node": "Buscar Tarea Pendiente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Tarea Pendiente": {
+      "main": [
+        [
+          {
+            "node": "Reclamar Tarea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reclamar Tarea": {
+      "main": [
+        [
+          {
+            "node": "Leer Research Existente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Research Existente": {
+      "main": [
+        [
+          {
+            "node": "Armar Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter: Sintetizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter: Sintetizar": {
+      "main": [
+        [
+          {
+            "node": "Armar Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Documentos": {
+      "main": [
+        [
+          {
+            "node": "Escribir Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL: Registrar Documentos": {
+      "main": [
+        [
+          {
+            "node": "Git Commit y Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Git Commit y Push": {
+      "main": [
+        [
+          {
+            "node": "Avanzar a Siguiente Etapa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escribir Archivos": {
+      "main": [
+        [
+          {
+            "node": "SQL: Registrar Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

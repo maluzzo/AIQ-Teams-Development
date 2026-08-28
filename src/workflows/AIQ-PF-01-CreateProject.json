@@ -236,6 +236,26 @@
         352,
         304
       ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ProjectRuns SET Status = 'Pending', CurrentStage = 'AIQ-PF-02-MarketResearch' WHERE RunId = '{{ $json.RunId }}';"
+      },
+      "id": "sql-advance-pf01",
+      "name": "Avanzar a Siguiente Etapa",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        460
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "sdZpWH92vojb2Fnl",
+          "name": "Sql - AIQ Development IA"
+        }
+      }
     }
   ],
   "connections": {
@@ -309,7 +329,7 @@
       "main": [
         [
           {
-            "node": "Git Commit y Push",
+            "node": "Avanzar a Siguiente Etapa",
             "type": "main",
             "index": 0
           }
@@ -332,6 +352,17 @@
         [
           {
             "node": "Convertir a Archivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avanzar a Siguiente Etapa": {
+      "main": [
+        [
+          {
+            "node": "Git Commit y Push",
             "type": "main",
             "index": 0
           }
