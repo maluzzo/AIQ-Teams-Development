@@ -57,8 +57,8 @@
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
       "position": [
-        240,
-        304
+        208,
+        80
       ],
       "credentials": {
         "sshPrivateKey": {
@@ -80,8 +80,8 @@
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        464,
-        304
+        544,
+        96
       ]
     },
     {
@@ -116,7 +116,7 @@
       "credentials": {
         "microsoftSql": {
           "id": "sdZpWH92vojb2Fnl",
-          "name": "AIQ SQL Server"
+          "name": "Sql - AIQ Development IA"
         }
       }
     },
@@ -137,14 +137,14 @@
       "credentials": {
         "microsoftSql": {
           "id": "sdZpWH92vojb2Fnl",
-          "name": "AIQ SQL Server"
+          "name": "Sql - AIQ Development IA"
         }
       }
     },
     {
       "parameters": {
         "authentication": "privateKey",
-        "command": "=cd /opt/aiq/product-factory/repo && git add projects/{{ $('Generar Slug').item.json.slug }} && git commit -m \"Nuevo proyecto: {{ $('Generar Slug').item.json.slug }}\" && git push"
+        "command": "=cd /opt/aiq/product-factory/repo && git pull --rebase && git add projects/{{ $('Generar Slug').item.json.slug }} && git commit -m \"Nuevo proyecto: {{ $('Generar Slug').item.json.slug }}\" && git push"
       },
       "id": "ssh-git-push-01",
       "name": "Git Commit y Push",
@@ -177,6 +177,65 @@
         304
       ],
       "webhookId": "1bc2735e-4b60-465d-bf95-2c54cab988f4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "projectName",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.projectName }}"
+            },
+            {
+              "id": "a2",
+              "name": "idea",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.idea }}"
+            },
+            {
+              "id": "a3",
+              "name": "notes",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.notes }}"
+            },
+            {
+              "id": "a4",
+              "name": "slug",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.slug }}"
+            },
+            {
+              "id": "a5",
+              "name": "basePathHost",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.basePathHost }}"
+            },
+            {
+              "id": "a6",
+              "name": "basePathContainer",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.basePathContainer }}"
+            },
+            {
+              "id": "a7",
+              "name": "requirementsMd",
+              "type": "string",
+              "value": "={{ $('Generar Slug').item.json.requirementsMd }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-restore-01",
+      "name": "Restaurar Datos",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        352,
+        304
+      ]
     }
   ],
   "connections": {
@@ -206,7 +265,7 @@
       "main": [
         [
           {
-            "node": "Convertir a Archivo",
+            "node": "Restaurar Datos",
             "type": "main",
             "index": 0
           }
@@ -262,6 +321,17 @@
         [
           {
             "node": "Form: Confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar Datos": {
+      "main": [
+        [
+          {
+            "node": "Convertir a Archivo",
             "type": "main",
             "index": 0
           }
